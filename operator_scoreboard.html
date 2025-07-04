@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <title>Табло оператора (Pusher Edition)</title>
+    <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
+    <style>
+        /* Ваши CSS стили остаются без изменений */
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; padding: 15px; 
+            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+            min-height: 100vh; color: #ffffff;
+        }
+        #operator-global-timer-container { 
+            font-size: 36px; font-weight: bold; color: #ffffff; 
+            background-color: rgba(60,60,60,0.9); padding: 12px 30px; 
+            border-radius: 8px; margin-bottom: 20px; text-align: center;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8); border: 2px solid #4a4a4a;
+        }
+        .operator-scoreboard-container { 
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px; padding: 10px;
+        }
+        .op-lane { 
+            border: none; border-radius: 8px; padding: 15px; 
+            background: linear-gradient(135deg, #3a3a3a 0%, #2a2a2a 100%);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3); border-left: 3px solid #6e6e6e;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .op-lane:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.4); }
+        .op-lane-header { display: flex; justify-content: center; align-items: center; 
+            margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #4a4a4a; }
+        .op-lane-name { font-size: 1.3em; font-weight: 600; color: #ffffff; margin: 0; text-align: center; }
+        .op-lane-details { display: grid; gap: 10px; }
+        .op-lane-details .detail-row { display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid #4a4a4a; }
+        .op-lane-details .detail-row:last-child { border-bottom: none; }
+        .op-lane-details .label { font-weight: 600; color: #b0b0b0; min-width: 100px; font-size: 0.9em; }
+        .op-lane-details .value { color: #ffffff; font-weight: 600; font-size: 1.0em; flex-grow: 1; }
+        .op-lane-status { margin-top: 15px; padding: 10px 15px; border-radius: 6px; font-weight: 600; 
+            text-align: center; font-size: 0.9em; text-transform: uppercase; letter-spacing: 0.5px; }
+        .status-active { background: linear-gradient(45deg, #4caf50, #45a049); color: white; 
+            border: 2px solid #4caf50; animation: pulse 2s infinite; }
+        .status-complete { background: linear-gradient(45deg, #6e6e6e, #5e5e5e); color: white; border: 2px solid #7e7e7e; }
+        .status-inactive { background: linear-gradient(45deg, #5a5a5a, #4a4a4a); color: #b0b0b0; border: 2px solid #6a6a6a; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.02); } 100% { transform: scale(1); } }
+    </style>
+</head>
+<body>
+    <div id="operator-global-timer-container">--:--</div>
+    <div id="operator-scoreboard-container" class="operator-scoreboard-container"></div>
+
+    <script>
+        const operatorScoreboardContainer = document.getElementById('operator-scoreboard-container');
+        const operatorGlobalTimerDisplay = document.getElementById('operator-global-timer-container');
+
+        // =====================================================================
+        // НАСТРОЙКИ PUSHER: ЗАМЕНИТЕ ЭТИ ЗНАЧЕНИЯ НА ВАШИ
+        // =====================================================================
+        const PUSHER_KEY = '5aab07a273683e30e1c4'; // <-- ВАЖНО: Замените на ваш Key из Pusher
+        const PUSHER_CLUSTER = 'eu';     // <-- ВАЖНО: Замените на ваш Cluster (например 'eu')
+        const PUSHER_CHANNEL_NAME = 'judge button system'; // Должно совпадать с config.py
+
+        let allOperatorLanesData = []; // Хранилище последних данных по всем дорожкам
+
+        // Включаем логирование в консоль браузера для отладки
+        Pusher.logToConsole = true;
+
+        const pusher = new Pusher(PUSHER_KEY, {
+            cluster: PUSHER_CLUSTER
+        });
+
+        console.log(`[Pusher] Подписка на канал: ${PUSHER_CHANNEL_NAME}`);
+        const channel = pusher.subscribe(PUSHER_CHANNEL_NAME);
+
+        channel.bind('lane-update', function(status) {
+            // Обновляем данные в нашем локальном хранилище
+            const existingIndex = allOperatorLanesData.findIndex(lane => lane.lane_id === status.lane_id);
+            if (existingIndex !== -1) {
+                allOperatorLanesData[existingIndex] = status;
+            } else {
+                allOperatorLanesData.push(status);
+            }
+
+            // Вызываем функции для обновления интерфейса
+            updateOperatorLaneDisplay(status);
+            handleOperatorTimerStateFromStatus(status);
+        });
+
+        pusher.connection.bind('connected', () => {
+            console.log('✅ [Pusher] Соединение установлено!');
+            operatorGlobalTimerDisplay.textContent = "00:00";
+        });
+        
+        pusher.connection.bind('error', (err) => {
+            console.error('❌ [Pusher] Ошибка соединения:', err);
+            operatorGlobalTimerDisplay.textContent = "Помилка зв'язку";
+        });
+        
+        // =====================================================================
+        // Вспомогательные функции для обновления интерфейса (остаются почти без изменений)
+        // =====================================================================
+
+        function escapeHtml(unsafe) {
+            if (typeof unsafe !== 'string') {
+                if (unsafe === null || unsafe === undefined) return '';
+                unsafe = unsafe.toString();
+            }
+            return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                         .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+        }
+
+        function handleOperatorTimerStateFromStatus(status) {
+            if (!status || !status.lane_id) return;
+            const hasAnyActiveLane = allOperatorLanesData.some(lane => lane.is_active);
+
+            if (hasAnyActiveLane) {
+                if (status.timer_direction === "COUNT_DOWN") {
+                    operatorGlobalTimerDisplay.textContent = status.time_remaining_str;
+                } else {
+                    operatorGlobalTimerDisplay.textContent = status.time_elapsed_str;
+                }
+            } else {
+                const finishedLanes = allOperatorLanesData.filter(lane => lane.is_complete);
+                if (finishedLanes.length > 0) {
+                    finishedLanes.sort((a,b) => b.time_elapsed_seconds - a.time_elapsed_seconds);
+                    operatorGlobalTimerDisplay.textContent = finishedLanes[0].time_elapsed_str;
+                } else if (status.timer_direction === "COUNT_DOWN" && status.time_cap_seconds > 0) {
+                     operatorGlobalTimerDisplay.textContent = status.time_cap_str;
+                } else {
+                    operatorGlobalTimerDisplay.textContent = "00:00";
+                }
+            }
+        }
+
+        function updateOperatorLaneDisplay(status) {
+            if (!status || !status.lane_id) return;
+
+            const rawLaneId = status.lane_id;
+            let laneDiv = document.getElementById(`op-lane-${rawLaneId}`);
+
+            if (!laneDiv) {
+                laneDiv = document.createElement('div');
+                laneDiv.className = 'op-lane';
+                laneDiv.id = `op-lane-${rawLaneId}`;
+                operatorScoreboardContainer.appendChild(laneDiv);
+
+                // Сортируем дорожки после добавления новой
+                sortOperatorLanes();
+            }
+
+            let statusText = 'Очікування', statusClass = 'status-inactive';
+            if (status.is_complete) {
+                statusText = "Завершено"; statusClass = 'status-complete';
+            } else if (status.is_active) {
+                statusText = "Активний"; statusClass = 'status-active';
+            }
+            
+            const athleteName = status.athlete_name_or_lane_id;
+            let displayLaneNumber = rawLaneId.split('_').pop().replace(/^0+/, '') || rawLaneId;
+            
+            let headerLaneText = `Д${escapeHtml(displayLaneNumber)}`;
+            if (athleteName && athleteName.trim() !== '' && athleteName !== rawLaneId) {
+                headerLaneText += `: ${escapeHtml(athleteName)}`;
+            }
+
+            laneDiv.innerHTML = `
+                <div class="op-lane-header">
+                    <h3 class="op-lane-name">${headerLaneText}</h3>
+                </div>
+                <div class="op-lane-details">
+                    <div class="detail-row">
+                        <span class="label">🔄 Раунд:</span>
+                        <span class="value">${escapeHtml(status.current_round_display)} / ${escapeHtml(status.total_rounds_display)}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="label">🏋️ Вправа:</span>
+                        <span class="value">${escapeHtml(status.current_exercise_name)}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="label">📊 Прогрес:</span>
+                        <span class="value">
+                            ${escapeHtml(status.current_exercise_progress_display)} / ${escapeHtml(status.current_exercise_target_display)} ${escapeHtml(status.current_exercise_unit)}
+                        </span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="label">🎯 Рахунок:</span>
+                        <span class="value">${escapeHtml(status.score_display_str)}</span>
+                    </div>
+                </div>
+                <div class="op-lane-status ${statusClass}">${statusText}</div>
+            `;
+        }
+
+        function sortOperatorLanes() {
+            const lanes = Array.from(operatorScoreboardContainer.children);
+            lanes.sort((a, b) => {
+                const numA = parseInt(a.id.split('-').pop().split('_').pop(), 10);
+                const numB = parseInt(b.id.split('-').pop().split('_').pop(), 10);
+                return numA - numB;
+            });
+            lanes.forEach(lane => operatorScoreboardContainer.appendChild(lane));
+        }
+    </script>
+</body>
+</html>
