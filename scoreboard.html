@@ -1,202 +1,154 @@
-<!DOCTYPE html>
-<html lang="uk">
-<head>
-    <meta charset="UTF-8">
-    <title>OBS Табло (Pusher Edition)</title>
-    <script src="https://js.pusher.com/8.2.0/pusher.min.js"></script>
-    <style>
-        /* Ваши CSS стили остаются без изменений */
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            margin: 0; padding: 15px; 
-            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
-            min-height: 100vh; color: #ffffff; overflow: hidden;
-            display: flex; flex-direction: column; align-items: center; padding-top: 10px;
-        }
-        #obs-global-timer-container { 
-            font-size: 36px; font-weight: bold; color: #ffffff; 
-            background-color: rgba(60,60,60,0.9); padding: 12px 30px; 
-            border-radius: 8px; margin-bottom: 20px; text-align: center;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.8); border: 2px solid #4a4a4a;
-        }
-        .scoreboard-container { 
-            display: flex; flex-direction: column; align-items: flex-start; gap: 12px; width: auto;
-        }
-        .lane-display { 
-            border: none; border-radius: 8px; padding: 12px 16px; 
-            background: linear-gradient(135deg, #3a3a3a 0%, #2a2a2a 100%);
-            box-shadow: 0 4px 15px rgba(0,0,0,0.3); border-left: 3px solid #6e6e6e;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-            font-size: 22px; min-width: 280px; box-sizing: border-box; 
-            display: flex; align-items: baseline;
-        }
-        .lane-display:hover { 
-            transform: translateY(-2px); 
-            box-shadow: 0 6px 20px rgba(0,0,0,0.4); 
-        }
-        .lane-name { 
-            font-weight: bold; color: #ffffff; margin-right: 12px; 
-            font-size: 1.0em;
-        }
-        .current-reps { 
-            color: #ffffff; font-weight: bold; 
-            font-size: 1.0em;
-        }
-        .current-unit { 
-            color: #b0b0b0; font-size: 0.8em; margin-left: 6px; 
-            font-weight: 500;
-        }
-        .final-score { 
-            color: #4caf50; font-weight: bold; 
-            font-size: 1.0em;
-        }
-        @media (max-width: 768px) {
-            body { padding: 10px; }
-            #obs-global-timer-container { font-size: 28px; padding: 10px 20px; }
-            .lane-display { padding: 10px 14px; min-width: 250px; font-size: 20px; }
-            .lane-name { font-size: 0.95em; }
-        }
-        @media (max-width: 480px) {
-            .lane-display { 
-                flex-direction: column; align-items: flex-start; 
-                min-width: 220px; font-size: 18px;
-            }
-            .lane-name { margin-right: 0; margin-bottom: 4px; }
-        }
-    </style>
-</head>
-<body>
-    <div id="obs-global-timer-container">--:--</div>
-    <div id="obs-scoreboard-container" class="scoreboard-container"></div>
+<script>
+    const scoreboardContainer = document.getElementById('obs-scoreboard-container');
+    const globalTimerDisplay = document.getElementById('obs-global-timer-container');
+    
+    // =====================================================================
+    // НАСТРОЙКИ PUSHER (остаются прежними)
+    // =====================================================================
+    const PUSHER_KEY = '5aab07a273683e30e1c4'; // <-- Замените на ваш Key
+    const PUSHER_CLUSTER = 'eu';     // <-- Замените на ваш Cluster
+    const PUSHER_CHANNEL_NAME = 'judge-button-system'; // Должно совпадать с config.py
 
-    <script>
-        const scoreboardContainer = document.getElementById('obs-scoreboard-container');
-        const globalTimerDisplay = document.getElementById('obs-global-timer-container');
+    // =====================================================================
+    // НОВАЯ ЛОГИКА КЛИЕНТСКОГО ТАЙМЕРА
+    // =====================================================================
+    let clientSideTimerId = null;
+    let isTimerRunning = false;
+    let timerDirection = 'COUNT_UP';
+    let currentSeconds = 0;
+
+    function tick() {
+        if (timerDirection === 'COUNT_DOWN') {
+            currentSeconds--;
+            if (currentSeconds < 0) currentSeconds = 0;
+        } else {
+            currentSeconds++;
+        }
+        globalTimerDisplay.textContent = formatTimeMMSS(currentSeconds);
+    }
+
+    function startClientTimer(direction, initialSeconds) {
+        if (isTimerRunning) return; // Не запускаем, если уже работает
         
-        // =====================================================================
-        // НАСТРОЙКИ PUSHER: ЗАМЕНИТЕ ЭТИ ЗНАЧЕНИЯ НА ВАШИ
-        // =====================================================================
-        const PUSHER_KEY = '5aab07a273683e30e1c4'; // <-- ВАЖНО: Замените на ваш Key из Pusher
-        const PUSHER_CLUSTER = 'eu';     // <-- ВАЖНО: Замените на ваш Cluster (например 'eu')
-        const PUSHER_CHANNEL_NAME = 'judge-button-system'; // Должно совпадать с config.py
+        console.log(`[Timer] Запуск таймера. Направление: ${direction}, Старт: ${initialSeconds} сек.`);
+        isTimerRunning = true;
+        timerDirection = direction;
+        currentSeconds = initialSeconds;
+        globalTimerDisplay.textContent = formatTimeMMSS(currentSeconds);
         
-        // Включаем логирование в консоль браузера для отладки
-        Pusher.logToConsole = true;
+        if (clientSideTimerId) clearInterval(clientSideTimerId);
+        clientSideTimerId = setInterval(tick, 1000);
+    }
 
-        const pusher = new Pusher(PUSHER_KEY, {
-            cluster: PUSHER_CLUSTER
-        });
+    function stopClientTimer() {
+        if (!isTimerRunning) return; // Не останавливаем, если не запущен
 
-        console.log(`[Pusher] Подписка на канал: ${PUSHER_CHANNEL_NAME}`);
-        const channel = pusher.subscribe(PUSHER_CHANNEL_NAME);
+        console.log('[Timer] Остановка таймера.');
+        isTimerRunning = false;
+        if (clientSideTimerId) {
+            clearInterval(clientSideTimerId);
+            clientSideTimerId = null;
+        }
+    }
+    
+    // =====================================================================
+    // Инициализация PUSHER и обработка событий
+    // =====================================================================
+    let allLanesData = {};
 
-        // Эта функция будет вызываться каждый раз, когда приходит новое событие 'lane-update'
-        channel.bind('lane-update', function(status) {
-            // console.log('Получено обновление:', status); // Раскомментируйте для отладки
-            updateLaneInOBS(status);
-            handleGlobalTimer(status);
-        });
+    Pusher.logToConsole = true;
+    const pusher = new Pusher(PUSHER_KEY, { cluster: PUSHER_CLUSTER });
+    const channel = pusher.subscribe(PUSHER_CHANNEL_NAME);
+
+    channel.bind('lane-update', function(status) {
+        if (!status || !status.lane_id) return;
         
-        pusher.connection.bind('connected', () => {
-            console.log('✅ [Pusher] Соединение установлено!');
-            globalTimerDisplay.textContent = "00:00";
-        });
+        // Обновляем данные дорожки и ее отображение
+        allLanesData[status.lane_id] = status;
+        updateLaneInOBS(status);
+
+        // Управляем таймером на основе общего состояния
+        const hasActiveLane = Object.values(allLanesData).some(lane => lane.is_active);
+
+        if (hasActiveLane) {
+            if (!isTimerRunning) {
+                // Если есть активная дорожка, а таймер не запущен - запускаем его
+                let initialTime = (status.timer_direction === 'COUNT_DOWN') 
+                    ? status.time_remaining_seconds 
+                    : status.time_elapsed_seconds;
+                startClientTimer(status.timer_direction, initialTime);
+            }
+        } else {
+            if (isTimerRunning) {
+                // Если нет активных дорожек, а таймер работает - останавливаем его
+                stopClientTimer();
+                // И показываем финальное время из последнего полученного статуса
+                globalTimerDisplay.textContent = formatTimeMMSS(status.time_elapsed_seconds);
+            }
+        }
+    });
+
+    pusher.connection.bind('connected', () => console.log('✅ [Pusher] Соединение установлено!'));
+    pusher.connection.bind('error', (err) => console.error('❌ [Pusher] Ошибка соединения:', err));
+    
+    // =====================================================================
+    // Вспомогательные функции (остаются прежними)
+    // =====================================================================
+    function escapeHtml(unsafe) {
+        if (typeof unsafe !== 'string') {
+            if (unsafe === null || unsafe === undefined) return '';
+            unsafe = unsafe.toString();
+        }
+        return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                     .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    }
+
+    function formatTimeMMSS(totalSeconds) {
+        if (isNaN(totalSeconds) || totalSeconds < 0) totalSeconds = 0;
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = Math.floor(totalSeconds % 60);
+        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+
+    function updateLaneInOBS(status) {
+        if (!status || !status.lane_id) return;
         
-        pusher.connection.bind('error', (err) => {
-            console.error('❌ [Pusher] Ошибка соединения:', err);
-            globalTimerDisplay.textContent = "Помилка зв'язку";
+        const rawLaneId = status.lane_id;
+        let displayLaneIdentifier = rawLaneId.split('_').pop().replace(/^0+/, '') || rawLaneId;
+        
+        let displayName = `Д${escapeHtml(displayLaneIdentifier)}`;
+        if (status.athlete_name_or_lane_id && status.athlete_name_or_lane_id !== rawLaneId) {
+            displayName += `: ${escapeHtml(status.athlete_name_or_lane_id)}`;
+        }
+        
+        let scoreOrProgressHtml;
+        if (status.is_complete) {
+            scoreOrProgressHtml = `<span class="final-score">${escapeHtml(status.score_display_str)}</span>`;
+        } else {
+            const currentReps = status.current_exercise_progress_display ?? '-';
+            const currentUnit = status.current_exercise_unit || '';
+            scoreOrProgressHtml = `<span class="current-reps">${escapeHtml(currentReps)}</span><span class="current-unit">${escapeHtml(currentUnit)}</span>`;
+        }
+        
+        let laneDiv = document.getElementById(`lane-obs-${rawLaneId}`);
+        if (!laneDiv) {
+            laneDiv = document.createElement('div');
+            laneDiv.className = 'lane-display';
+            laneDiv.id = `lane-obs-${rawLaneId}`;
+            scoreboardContainer.appendChild(laneDiv);
+            sortLanes();
+        }
+        
+        laneDiv.innerHTML = `<span class="lane-name">${displayName}:</span> ${scoreOrProgressHtml}`;
+    }
+
+    function sortLanes() {
+        const lanes = Array.from(scoreboardContainer.children);
+        lanes.sort((a, b) => {
+            const numA = parseInt(a.id.split('-').pop().split('_').pop(), 10);
+            const numB = parseInt(b.id.split('-').pop().split('_').pop(), 10);
+            return numA - numB;
         });
-
-        // =====================================================================
-        // Вспомогательные функции для обновления интерфейса
-        // =====================================================================
-
-        let allLanesData = {}; // Используем объект для хранения последних данных по каждой дорожке
-
-        function escapeHtml(unsafe) {
-            if (typeof unsafe !== 'string') {
-                if (unsafe === null || unsafe === undefined) return '';
-                unsafe = unsafe.toString();
-            }
-            return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-                         .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
-        }
-
-        function handleGlobalTimer(latestStatus) {
-            if (!latestStatus) return;
-            const hasActiveLane = Object.values(allLanesData).some(lane => lane.is_active);
-
-            if (hasActiveLane) {
-                // Если хоть одна дорожка активна, показываем ее таймер
-                if (latestStatus.timer_direction === "COUNT_DOWN") {
-                    globalTimerDisplay.textContent = latestStatus.time_remaining_str;
-                } else {
-                    globalTimerDisplay.textContent = latestStatus.time_elapsed_str;
-                }
-            } else {
-                // Если активных дорожек нет, ищем последнюю завершившуюся
-                const finishedLanes = Object.values(allLanesData).filter(lane => lane.is_complete);
-                if (finishedLanes.length > 0) {
-                     // Сортируем по времени завершения (если оно есть) и берем последнее
-                    finishedLanes.sort((a,b) => b.time_elapsed_seconds - a.time_elapsed_seconds);
-                    globalTimerDisplay.textContent = finishedLanes[0].time_elapsed_str;
-                } else if (latestStatus.timer_direction === "COUNT_DOWN" && latestStatus.time_cap_seconds > 0) {
-                    globalTimerDisplay.textContent = latestStatus.time_cap_str;
-                } else {
-                    globalTimerDisplay.textContent = "00:00";
-                }
-            }
-        }
-
-        function updateLaneInOBS(status) {
-            if (!status || !status.lane_id) { return; }
-            
-            // Сохраняем или обновляем данные по этой дорожке
-            allLanesData[status.lane_id] = status;
-
-            const rawLaneId = status.lane_id;
-            // Убираем 'LANE_' и ведущие нули из номера
-            let displayLaneIdentifier = rawLaneId.split('_').pop().replace(/^0+/, '') || rawLaneId;
-            
-            let displayName = `Д${escapeHtml(displayLaneIdentifier)}`;
-            if (status.athlete_name_or_lane_id && status.athlete_name_or_lane_id !== rawLaneId) {
-                displayName += `: ${escapeHtml(status.athlete_name_or_lane_id)}`;
-            }
-            
-            let scoreOrProgressHtml;
-            if (status.is_complete) {
-                scoreOrProgressHtml = `<span class="final-score">${escapeHtml(status.score_display_str)}</span>`;
-            } else {
-                const currentReps = status.current_exercise_progress_display ?? '-';
-                const currentUnit = status.current_exercise_unit || '';
-                scoreOrProgressHtml = `<span class="current-reps">${escapeHtml(currentReps)}</span><span class="current-unit">${escapeHtml(currentUnit)}</span>`;
-            }
-            
-            let laneDiv = document.getElementById(`lane-obs-${rawLaneId}`);
-            if (!laneDiv) {
-                laneDiv = document.createElement('div');
-                laneDiv.className = 'lane-display';
-                laneDiv.id = `lane-obs-${rawLaneId}`;
-                scoreboardContainer.appendChild(laneDiv);
-
-                // После добавления нового элемента, отсортируем все дорожки
-                sortLanes();
-            }
-            
-            laneDiv.innerHTML = `<span class="lane-name">${displayName}:</span> ${scoreOrProgressHtml}`;
-        }
-
-        function sortLanes() {
-            const lanes = Array.from(scoreboardContainer.children);
-            lanes.sort((a, b) => {
-                const numA = parseInt(a.id.split('-').pop().split('_').pop(), 10);
-                const numB = parseInt(b.id.split('-').pop().split('_').pop(), 10);
-                return numA - numB;
-            });
-            // Перерисовываем отсортированные элементы
-            lanes.forEach(lane => scoreboardContainer.appendChild(lane));
-        }
-
-    </script>
-</body>
-</html>
+        lanes.forEach(lane => scoreboardContainer.appendChild(lane));
+    }
+</script>
